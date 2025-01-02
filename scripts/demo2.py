@@ -9,6 +9,7 @@ import sys
 sys.path.append("./sam2")
 from sam2.build_sam import build_sam2_video_predictor
 
+
 color = [(255, 0, 0)]
 
 def load_txt(gt_path):
@@ -38,6 +39,15 @@ def prepare_frames_or_path(video_path):
         return video_path
     else:
         raise ValueError("Invalid video_path format. Should be .mp4 or a directory of jpg frames.")
+
+def save_ball_tracks(tracks_output_file, frame_idx, bbox, speed):
+    """
+    Save soccer ball tracks (class_id == 1, track_id == 0) to a file.
+    Format: frame, class == 1, track_id == 0, x, y, w, h, speed
+    """
+    with open(tracks_output_file, 'a') as f:
+        x, y, w, h = bbox
+        f.write(f"{frame_idx},1,0,{x},{y},{w},{h},{speed:.2f}\n")
 
 def main(args):
     model_cfg = determine_model_cfg(args.model_path)
@@ -69,6 +79,10 @@ def main(args):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(args.video_output_path, fourcc, frame_rate, (width, height))
 
+    tracks_output_file = "ball_tracks.txt"  # File to save ball tracks
+    with open(tracks_output_file, 'w') as f:
+        f.write("frame,class,track_id,x,y,w,h,speed\n")
+
     with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
         state = predictor.init_state(frames_or_path, offload_video_to_cpu=True)
         bbox, track_label = prompts[0]
@@ -90,6 +104,11 @@ def main(args):
                     bbox = [x_min, y_min, x_max - x_min, y_max - y_min]
                 bbox_to_vis[obj_id] = bbox
                 mask_to_vis[obj_id] = mask
+
+                if obj_id == 0:  # Track the ball (class_id == 1, track_id == 0)
+                    x, y, w, h = bbox
+                    speed = 0.0  # Placeholder for speed, can be computed if required
+                    save_ball_tracks(tracks_output_file, frame_idx, (x, y, w, h), speed)
 
             if args.save_to_video:
                 img = loaded_frames[frame_idx]
@@ -113,8 +132,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--video_path", required=True, help="Input video path or directory of frames.")
-    parser.add_argument("--txt_path", required=True, help="Path to ground truth text file.")
+    parser.add_argument("--video_path", default="trimmed.mp4", help="Input video path or directory of frames.")
+    parser.add_argument("--txt_path", default="temp_bbox.txt", help="Path to ground truth text file.")
     parser.add_argument("--model_path", default="sam2/checkpoints/sam2.1_hiera_base_plus.pt", help="Path to the model checkpoint.")
     parser.add_argument("--video_output_path", default="demo.mp4", help="Path to save the output video.")
     parser.add_argument("--save_to_video", default=True, help="Save results to a video.")
